@@ -1,5 +1,6 @@
 mod rules;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -117,6 +118,18 @@ pub struct WafConfig {
     #[serde(default)]
     pub normalize_path: bool,
 
+    #[serde(default = "default_scope_mode")]
+    pub scope_mode: String, // "prefix" | "exact" | "regex"
+
+    #[serde(default)]
+    pub include: Vec<String>,
+
+    #[serde(default)]
+    pub exclude: Vec<String>,
+
+    #[serde(default = "default_behavior")]
+    pub default_behavior: String, // "bypass" | "protect"
+
     #[serde(default)]
     pub rules_path: Option<String>,
 
@@ -133,6 +146,14 @@ fn default_allowed_methods() -> Vec<String> {
         .into_iter()
         .map(|s| s.to_string())
         .collect()
+}
+
+fn default_scope_mode() -> String {
+    "prefix".into()
+}
+
+fn default_behavior() -> String {
+    "protect".into()
 }
 
 // static configuration if 'config_mode' = 'init'
@@ -211,16 +232,21 @@ fn should_block(req: &Request, cfg: &WafConfig) -> bool {
         return false;
     }
 
-    if !method_allowed(req, cfg) {
-        set_last_reason("method-not-allowed");
-        return cfg.mode == "block";
-    }
-
     let path = if cfg.normalize_path {
         normalize_path((&req.path).as_ref())
     } else {
         req.path.clone()
     };
+
+    if !should_apply_scope(&path, cfg) {
+        set_last_reason("scope-bypass");
+        return false;
+    }
+
+    if !method_allowed(req, cfg) {
+        set_last_reason("method-not-allowed");
+        return cfg.mode == "block";
+    }
 
     if let Some((action, rule_id)) = apply_rules(req, &path, cfg) {
         match action {
@@ -237,6 +263,34 @@ fn should_block(req: &Request, cfg: &WafConfig) -> bool {
 
     set_last_reason("");
     false
+}
+
+fn should_apply_scope(path: &str, cfg: &WafConfig) -> bool {
+    let mode = cfg.scope_mode.to_ascii_lowercase();
+
+    if matches_scope(path, &cfg.exclude, &mode) {
+        return false;
+    }
+    if matches_scope(path, &cfg.include, &mode) {
+        return true;
+    }
+
+    match cfg.default_behavior.to_ascii_lowercase().as_str() {
+        "bypass" => false,
+        _ => true,
+    }
+}
+
+fn matches_scope(path: &str, list: &[String], mode: &str) -> bool {
+    if list.is_empty() {
+        return false;
+    }
+
+    match mode {
+        "exact" => list.iter().any(|p| path == p),
+        "regex" => list.iter().any(|pat| Regex::new(pat).map_or(false, |re| re.is_match(path))),
+        _ => list.iter().any(|p| path.starts_with(p)),
+    }
 }
 
 // ======================
@@ -286,6 +340,10 @@ pub extern "C" fn handle(ptr: i32, len: i32) -> i32 {
         log: false,
         allowed_methods: default_allowed_methods(),
         normalize_path: true,
+        scope_mode: default_scope_mode(),
+        include: Vec::new(),
+        exclude: Vec::new(),
+        default_behavior: default_behavior(),
         rules_path: None,
         rules_reload_seconds: None,
     });
