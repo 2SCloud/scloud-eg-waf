@@ -5,12 +5,14 @@ use regex::Regex;
 use serde::Deserialize;
 use crate::WafConfig;
 
+#[allow(unused)]
 #[derive(Debug, Deserialize)]
 pub struct RulesFile {
     pub version: u32,
     pub rules: Vec<Rule>,
 }
 
+#[allow(unused)]
 #[derive(Debug, Deserialize)]
 pub struct Rule {
     pub id: String,
