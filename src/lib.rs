@@ -215,7 +215,9 @@ fn apply_rules(req: &Request, path: &str, cfg: &WafConfig) -> Option<(RuleAction
     for r in &cache.rules {
         let matched = match r.rule_type {
             RuleType::PathContains => r.values.iter().any(|v| path.contains(v)),
-            RuleType::PathPrefix => r.values.iter().any(|v| path.starts_with(v)),
+            RuleType::PathPrefix => r.values.iter().any(|v| {
+                path == v || path.starts_with(&format!("{}/", v))
+            }),
             RuleType::Regex => r.regexes.iter().any(|re| re.is_match(&hay)),
         };
 
